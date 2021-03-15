@@ -1,0 +1,785 @@
+---
+title: "Generalised linear mixed models for community composition"
+subtitle: "(including a little bit of Bayes)"
+author: "Jim Downie"
+institute: "Bangor University"
+date: "16^th^ March 2021"
+output:
+  xaringan::moon_reader:
+    lib_dir: libs
+    self_contained: TRUE
+    nature:
+      ratio: '16:9'
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+---
+```{r include=FALSE}
+library(tidyverse)
+library(cowplot)
+library(vegan)
+library(knitr)
+library(MCMCglmm)
+theme_set(theme_bw())
+set.seed(124)
+data("mtcars")
+data("dune")
+data("dune.env")
+knitr::opts_chunk$set(dev="svg")
+source("predictions.R")
+```
+
+
+# What is a linear model?
+
+* Remember learning how to calculate the equation of a straight line in school?
+
+$$ y = \beta x + c $$
+.pull-left[<br/>
+```{r echo=TRUE, eval=FALSE}
+x <- 0:20
+c <- 6
+b <- 1.5
+y <- (b * x) + c
+
+qplot(x, y, geom = "line")
+```
+
+.left[We want to use this equation (or similar equations) to describe real data]
+
+]
+
+.pull-right[
+```{r XYgraph, echo=FALSE, fig.width=5, fig.height=4}
+x <- 0:20
+c <- 6
+b <- 1.5
+y <- c + b * x
+qplot(x, y, geom = "line") + 
+  labs(x = "X", y = "Y") +
+  lims(x = c(0, 20), y = c(0, 40))
+```
+]
+
+---
+
+# What is a linear model?
+
+* Real data is noisy - there's lots of variation
+
+* There's not just one line you can draw through the data
+
+* Linear models - a statistical approach to finding the line that fits the data best
+
+```{r XYgraphError, fig.height=4, fig.width=5, warning=FALSE, include=FALSE}
+x <- 1:20
+c <- 6
+b <- 1.5
+e <- rnorm(20, mean = 0, sd = 4)
+y <- (b * x) + c + e
+df <- data.frame(x = x, y = y)
+```
+.pull-left[
+```{r Badline1, echo=FALSE, fig.height=4, fig.width=5, warning=FALSE}
+ggplot(df, aes(x, y)) +
+  geom_point() + 
+  geom_abline(intercept = 10, slope = 1) +
+  labs(x = "X", y = "Y") +
+  lims(x = c(0, 20), y = c(0, 40))
+```
+]
+.pull-right[
+```{r Badline2, echo=FALSE, fig.height=4, fig.width=5, warning=FALSE}
+ggplot(df, aes(x, y)) +
+  geom_point() + 
+  geom_abline(intercept = 6, slope = 1.6) +
+  labs(x = "X", y = "Y") +
+  lims(x = c(0, 20), y = c(0, 40))
+```
+]
+
+---
+
+# Where does this variation come from?
+
+.pull-left[
+<br/>
+1. There's a variable we haven't considered
+
+2. Bias or error in measurements
+
+3. Genetic or environmental variation between individuals
+
+We account for this using the normal distribution:
+]
+.pull-right[
+```{r NormalDist, echo=FALSE, fig.height=4, fig.width=5, warning=FALSE}
+x <- seq(-5, 5, length = 100)
+y <- dnorm(x)
+df <- data.frame(x = x, y = y)
+ggplot(df, aes(x = x, y = y)) +
+  geom_line() +
+  labs(x = "Epsilon", y = "Probability density")
+```
+]
+
+---
+
+# Building a linear model
+
+* Let's modify our equation of a straight line
+<br/><br/>
+$$y_{i} = \beta_{0} + \beta_{1} x + \varepsilon$$
+$$ \varepsilon \sim Normal(0, \sigma^{2}) $$
+<br/><br/>
+Here:
+* $y$ is our response variable - what are we trying to understand?
+
+* $\beta_0$ is the intercept - the value of $y$ when $x = 0$ 
+
+* $\beta_1$ is the effect of $x$ on $y$ - the number of units $y$ increases per unit increase in $x$
+
+* $\varepsilon$ is a normal distribution, centred on zero, with a width determined by $\sigma^2$
+
+---
+
+# Building a linear model
+
+* Let's modify our equation of a straight line
+
+$$y_{i} = \beta_{0} + \beta_{1} x + \varepsilon$$
+$$ \varepsilon \sim Normal(0, \sigma^{2}) $$
+
+* We want to find values of parameters $\beta_{0}$, $\beta_{1}$, and $\sigma^{2}$ that best describe the data
+
+* Using the *mtcars* dataset - how does horsepower affect a car's miles per gallon?
+
+---
+
+# Building a linear model
+
+* Using the *mtcars* dataset - how does horsepower affect a car's miles per gallon?
+
+```{r eval=FALSE, echo=TRUE, fig.height=4, fig.width=6, message=FALSE, warning=FALSE, fig.align='center'}
+ggplot(mtcars, aes(x = hp, y = mpg)) + geom_point(size = 3)
+```
+
+```{r eval=TRUE, echo=FALSE, fig.height=4, fig.width=6, message=FALSE, warning=FALSE, fig.align='center'}
+ggplot(mtcars, aes(x = hp, y = mpg)) + geom_point(size = 3) +
+  labs(x = "Horsepower", y = "Miles per gallon")
+```
+
+---
+
+# Building a linear model
+
+* Using the *mtcars* dataset - how does horsepower affect a car's miles per gallon?
+
+* We want to find values of $\beta_{0}$, $\beta_{1}$, and $\sigma^{2}$ for which the data is most likely
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+mod <- lm(mpg ~ hp, data = mtcars)
+coef(mod)
+sigma(mod)
+```
+
+$$ y_i = 30.1 - 0.07\times Horsepower + \varepsilon $$
+$$ \varepsilon \sim Normal(0, 3.86)$$
+
+---
+
+# Building a linear model
+
+```{r eval=FALSE, echo=TRUE, fig.align='center', fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
+ggplot(mtcars, aes(x = hp, y = mpg)) + geom_point(size = 3) +
+  geom_abline(intercept = 30.1, slope = -0.07) + ylim(c(0, 35))
+```
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
+ggplot(mtcars, aes(x = hp, y = mpg)) + geom_point(size = 3) +
+  geom_abline(intercept = 30.1, slope = -0.07) + ylim(c(0, 35)) + 
+  labs(x = "Horsepower", y = "Miles per gallon")
+```
+
+---
+
+# Building a linear model
+
+```{r eval=FALSE, echo=TRUE, message=FALSE, warning=FALSE, fig.height=4, fig.width=6, fig.align='center'}
+ggplot(mtcars, aes(x = hp, y = mpg)) + geom_point(size = 3) +
+  geom_smooth(method = "lm", colour = "black")+ ylim(c(0, 35))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=6, fig.align='center'}
+ggplot(mtcars, aes(x = hp, y = mpg)) + geom_point(size = 3) +
+  geom_smooth(method = "lm", colour = "black")+ ylim(c(0, 35)) +
+  labs(x = "Horsepower", y = "Miles per gallon")
+```
+
+---
+
+# Linear models with categorical variables
+
+* Using the *mtcars* dataset - how does the number of cylinders in the engine affect a car's miles per gallon?
+
+<br/><br/>
+
+$$ y_i = \beta_0 + \beta_1 Six + \beta_2 Eight + \varepsilon $$
+<br/><br/>
+
+* $\beta_0$ is the intercept, which represents a car with 4 cylinders
+
+* $Six$ is a variable that is 1 if the engine has six cylinders, and 0 if not
+
+* $Eight$ is a variable that is 1 if the engine has eight cylinders, and 0 if not
+---
+
+# Linear models with categorical variables
+
+* Using the *mtcars* dataset - how does the number of cylinders in the engine affect a car's miles per gallon?
+
+<br/><br/>
+
+$$ y_i = \beta_0 + \beta_1 Six + \beta_2 Eight + \varepsilon $$
+<br/><br/>
+
+```{r include=FALSE}
+mtcars$cyl <- as.factor(mtcars$cyl)
+```
+
+```{r message=FALSE, warning=FALSE}
+mod2 <- lm(mpg ~ cyl, data = mtcars)
+
+coef(mod2)
+```
+
+---
+
+# Linear models with categorical variables
+<br/><br/>
+```{r include=FALSE}
+mtcars$cyl <- as.factor(mtcars$cyl)
+newdat <- data.frame(cyl = levels(mtcars$cyl))
+newdat <- cbind(newdat, predict.lm(mod2, newdata = newdat, interval = "confidence"))
+newdat$cyl <- as.factor(newdat$cyl)
+```
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
+ggplot(mtcars, aes(x = cyl, y = mpg)) +
+  ggbeeswarm::geom_quasirandom()+
+  geom_point(data = newdat, aes(y = fit, x = cyl, colour = cyl), size = 3) +
+  geom_errorbar(data = newdat, 
+                  aes(y = fit, x = cyl, colour = cyl, ymin = lwr, ymax = upr),
+                  width = 0.2) +
+  labs(x = "Number of cylinders", y = "Miles per gallon") +
+  theme(legend.position = "none")
+```
+
+---
+
+# Extending linear models
+
+.pull-left[
+<br/>
+<br/>
+<br/>
+
+* Can include as many $\beta_x$ as we have variables we want to include
+
+* Variables can be categorical (e.g. blue, red) or continuous (e.g. temperature) - the maths is the same
+
+* Including lots of variables - creates a line through multidimensional space!
+]
+.pull-right[
+<br/><br/>
+<br/>
+<br/>
+
+
+```{r echo=TRUE, eval=FALSE}
+mod <- lm(mpg ~ hp + am, data = mtcars)
+```
+
+<br/>
+$$ y_i = \beta_0 + \beta_1  Horsepower + \beta_2 Manual + \varepsilon $$
+]
+---
+
+# Extending linear models
+<br/>
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=4, fig.align='center'}
+ggplot(mtcars, aes(x = hp, y = mpg)) + 
+  geom_point(aes(colour = as.factor(am))) +
+  geom_smooth(aes(colour = as.factor(am)), method = "lm") +
+  labs(x = "Horsepower", y = "Miles per gallon") +
+  theme(legend.position = "none")
+```
+
+
+---
+# Populations and groups
+
+#### Often in biology - things more similar than you would expect!
+
+   - chicks in nests - genetically related, same environment
+   
+   - fields in a landscape - plants in a field are more similar due to shared environment
+   
+--
+<br/>
+
+#### Use population and group effects (also known as fixed and random effects)
+
+  - Population effects describe what happens to the average field
+  
+  - Group effects describe what happens to specific fields
+  
+--
+<br/>
+
+#### R formula often looks like this:
+
+.center[
+`y ~ Var1 + Var2 + (Var1 + Var2 | Group)`
+]
+---
+
+# Linear models - putting it all together
+<br/>
+<br/>
+
+####  We have the basis for linear models - they are composed of parameters and variables
+
+#### Multiply the variables by the parameters and add all the terms together to produce a prediction
+
+#### We have an estimate of the error, $\varepsilon$, which tells us how dispersed around our model the data are
+
+#### Finally, we can account for variation among groups using group effects
+
+---
+
+# Using linear models for community data
+
+* Normally, community data is represented with one row per sample, and one column for each species
+
+* The value in a cell is the presence/absence or abundance of that species on that sample
+
+```{r eval=TRUE}
+dune <- rownames_to_column(dune, "Sample")
+```
+
+```{r echo=FALSE}
+kable(head(dune[,c(1:7)]))
+```
+
+---
+
+# Using linear models for community data
+
+* To make linear models for community data, we have to have one row per species per sample:
+
+```{r eval=TRUE}
+dune <- pivot_longer(dune, !Sample, names_to = "Species", 
+             values_to = "Abundance")
+```
+
+```{r echo=FALSE}
+kable(dune[c(1:3, 31:33, 61:63),])
+```
+
+---
+
+# Using linear models for community data
+
+* Then we can attach the sample-level environmental data
+
+```{r eval=TRUE, message=FALSE, warning=FALSE}
+dune.env <- rownames_to_column(dune.env, "Sample")
+dune <- left_join(dune, dune.env)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+kable(dune[c(1:3, 121:123, 301:303),c(1:3, 4, 6:7)])
+```
+
+---
+
+# Using linear models for community data
+<br/>
+
+#### Using the data in this format, we can build a model to explain the drivers of community composition
+
+#### Our response variable is the abundance of species $i$ on sample $j$
+
+#### We fit population effects, as well as group effects for each species
+
+  - The population effects describe the response of the "average" species
+  
+  - The group effects describe how each individual species responds
+
+---
+
+# Using linear models for community data
+<br/>
+
+### These models are complex (lots of parameters!)
+
+### Can be hard for the computer to fit
+
+## Using Bayesian statistical methods helps!
+
+---
+
+# Bayesian statistics - a quick primer
+
+* Bayesian statistics is a philosophy of statistics in which everything is treated as a "random variable" (i.e. everything has a probability distribution)
+
+--
+
+* Because everything has a probability distribution, we must specify a *prior* distribution for each parameter in our model
+
+--
+
+* The result of the model is the *posterior* distribution, which combines the "likelihood" of the data with the *prior* distribution
+
+---
+
+# Bayesian statistics - a quick primer
+
+.center[
+![](Figures/prior-posterior_sc.png)
+]
+
+---
+
+# Bayesian statistics - MCMC
+
+#### Bayesian statistics are analytically hard to solve for anything except simple models - can use Markov Chain Monte Carlo (MCMC) in order to approximate the answer
+
+  - (this takes a long time...)
+
+#### MCMC is an algorithm that "samples" from the posterior distribution
+
+--
+
+```{r MCMCchain, echo=FALSE, fig.align='center', fig.height=3, fig.width=10, message=FALSE, warning=FALSE}
+plot(model_noPhylo$Sol[,6])
+```  
+
+---
+
+# Putting it all together - using a Bayesian linear model to analyse microbiome data
+
+* The dataset we are going to analyse is of the Atacama desert soil microbiome - it's one of the QIIME2 tutorial datasets
+
+* The data comes from the paper "Signiﬁcant Impacts of Increasing Aridity on the Arid Soil Microbiome" by Nielson et al. (2017) - [https://doi.org/10.1128/mSystems.00195-16](https://doi.org/10.1128/mSystems.00195-16)
+
+* The study was a metabarcoding survey of desert soils from two transects across the Atacama desert in Chile, looking at how soil aridity affects microbiome composition
+
+---
+
+# Atacama desert microbiome
+
+.center[
+![](Figures/study_map.png)
+]
+
+---
+
+# Atacama desert microbiome
+
+* Authors measured a number of environmental variables at each site, including: 
+
+  - elevation, soil humidity, soil temperature, soil electrical conductance, and vegetation cover
+  
+* The authors hypothesise:  
+  
+> *"We hypothesize that in arid ecosystems, regions of higher aridity correlate with decreased microbial taxonomic richness and significant changes in phylogenetic composition.*
+
+* Can we demonstrate this using a Bayesian linear model?
+
+---
+
+# Atacama desert microbiome - data preprocessing
+
+1. Microbiome sequences processed using QIIME2
+
+  - demultiplexed
+  
+  - features identified using dada2
+  
+  - taxonomically classified using naive Bayes classifier trained on the Silva database
+  
+2. There was some missing data in the sample metadata, so I imputed values using the R package *mice*
+  
+---
+
+# Atacama desert microbiome - data
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=5, fig.align='center'}
+pairsPlot
+```
+
+
+---
+
+# Atacama desert microbiome - data
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+disp_data <- select(data, SampleID, Pres_Abs = PA, ASV, 
+                    Elevation = elevation, Humidity = average.soil.relative.humidity,
+                    Family) %>% 
+  mutate(ASV = paste0(substr(ASV, 0, 10), "..."))
+kable(disp_data[c(1:3, 2935:2937, 5868:5871),], row.names = FALSE)
+```
+
+---
+
+# Atacama desert microbiome - model
+
+```{r eval=FALSE}
+model <- MCMCglmm(pres_abs ~ elevation_mc + percentcover_mc + average.soil.temperature_mc + 
+                  average.soil.relative.humidity_mc + ec_mc + TotReads,
+                random = ~ us(1 + elevation_mc + percentcover_mc + average.soil.temperature_mc + 
+                                average.soil.relative.humidity_mc + ec_mc):ASV,
+                family = "categorical",
+                data = data, 
+                nitt = 500000, burnin = 60000,
+                prior = list(R = list(V = 0.5, fix = 1),
+                             G = list(G1 = list(V = diag(6),nu=1,
+                                            alpha.mu = rep(0, 6), alpha.V = diag(6)*k))),
+                thin = 100,
+                pr = T)
+```
+
+```
+                       MCMC iteration = 0
+
+ Acceptance ratio for liability set 1 = 0.000596
+
+                       MCMC iteration = 1000
+
+ Acceptance ratio for liability set 1 = 0.450469
+```
+
+---
+
+# Atacama desert microbiome - model checking
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.width=10, fig.height=5, fig.align='center'}
+plot(model_noPhylo$Sol[,c(7,2)])
+```
+
+---
+
+# Atacama desert microbiome - model checking
+
+* Does the model perform well?
+
+```{r eval=FALSE, message=FALSE, warning=FALSE}
+sims <- simulate(model, 1000)
+sims_nzero <- apply(model, 2, function(x) { sum(x ==0) })
+```
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
+sims_nzero_plot
+```
+
+---
+
+# Atacama desert microbiome - model checking
+
+* Does the model perform well?
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
+richness_prediction_plot
+```
+
+---
+
+# Atacama desert microbiome - model checking
+<br/><br/><br/><br/>
+.center[
+```
+                                   eff.samp    
+(Intercept)                           447.1
+elevation_mc                          114.9
+percentcover_mc                       339.5
+average.soil.temperature_mc           189.0
+average.soil.relative.humidity_mc     144.4
+ec_mc                                 704.4
+TotReads                              557.1
+```
+]
+---
+
+# Atacama desert microbiome - population effects
+<br/><br/><br/>
+```
+ Location effects: pres_abs ~ elevation_mc + percentcover_mc + average.soil.temperature_mc + average.soil.relative.humidity_mc + ec_mc + TotReads 
+
+                                   post.mean   l-95% CI   u-95% CI eff.samp   pMCMC    
+(Intercept)                       -4.919e+00 -5.056e+00 -4.800e+00    447.1 < 2e-04 ***
+elevation_mc                      -1.953e-01 -3.093e-01 -8.855e-02    114.9 < 2e-04 ***
+percentcover_mc                   -2.108e-01 -2.853e-01 -1.394e-01    339.5 < 2e-04 ***
+average.soil.temperature_mc       -2.899e-01 -3.914e-01 -1.859e-01    189.0 < 2e-04 ***
+average.soil.relative.humidity_mc  5.009e-01  3.982e-01  6.030e-01    144.4 < 2e-04 ***
+ec_mc                             -5.369e-02 -9.071e-02 -1.665e-02    704.4 0.00455 ** 
+TotReads                           1.074e-04  8.373e-05  1.299e-04    557.1 < 2e-04 ***
+```
+
+---
+
+# Atacama desert microbiome - species effects
+<br/>
+```
+ G-structure:  ~us(1 + elevation_mc + percentcover_mc + average.soil.temperature_mc + 
+                      average.soil.relative.humidity_mc + ec_mc):ASV
+
+                                                        post.mean  l-95% CI u-95% CI eff.samp
+(Intercept):(Intercept).ASV                             0.363990  0.319072  0.41449   478.07
+elevation_mc:(Intercept).ASV                            0.099264  0.039035  0.15805   236.19
+percentcover_mc:(Intercept).ASV                        -0.073527 -0.115521 -0.02639   475.06
+average.soil.temperature_mc:(Intercept).ASV             0.049795 -0.015368  0.11223   369.24
+average.soil.relative.humidity_mc:(Intercept).ASV       0.051758 -0.010551  0.10717   302.30
+ec_mc:(Intercept).ASV                                  -0.131431 -0.158954 -0.10320   458.99
+(Intercept):elevation_mc.ASV                            0.099264  0.039035  0.15805   236.19
+elevation_mc:elevation_mc.ASV                           0.582939  0.441745  0.72656   101.71
+percentcover_mc:elevation_mc.ASV                        0.061208 -0.026036  0.13714   245.08
+average.soil.temperature_mc:elevation_mc.ASV            0.175480  0.049414  0.30656   180.76
+...and more
+```
+
+---
+
+# Atacama desert microbiome - species effects
+<br/><br/><br/><br/>
+$$ 
+\text{Variance-Covariance matrix} = 
+    \begin{bmatrix}
+    \color{red}{0.38} & 0.14 & -0.08 & \cdots & 0.06 \\\
+    0.14 & \color{red}{0.53} & 0.06 & & \\\
+    -0.08 & 0.06 & \color{red}{0.46} & &  \\\
+    \vdots & & & \ddots & & \\\
+    0.06 & & & & \color{red}{0.57} \\\
+    \end{bmatrix}
+$$
+
+---
+
+# Atacama desert microbiome - results
+
+> *"We hypothesize that in arid ecosystems, regions of higher aridity correlate with decreased microbial taxonomic richness and significant changes in phylogenetic composition.*
+
+.pull-left[
+<br/>
+<br/>
+<br/>
+<br/>
+
+The model shows that increasing soil humidity strongly increases alpha diversity (taxonomic richness)
+]
+
+.pull-right[
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=4}
+Plots[[7]]
+```
+]
+
+---
+
+# Atacama desert microbiome - results
+
+> *"We hypothesize that in arid ecosystems, regions of higher aridity correlate with decreased microbial taxonomic richness and significant changes in phylogenetic composition.*
+
+.pull-left[
+<br/>
+<br/>
+<br/>
+<br/>
+
+The model shows that soil humidity is associated with turnover in community composition
+]
+
+.pull-right[
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=4}
+Plots[[8]]
+```
+]
+
+---
+
+# Atacama desert microbiome - results 
+
+```{r echo=FALSE, fig.align='center', fig.height=5, fig.width=13, message=FALSE, warning=FALSE}
+plot_grid(plotlist = Plots, nrow = 2, byrow = FALSE)
+```
+
+---
+
+# Atacama desert microbiome - taxonomy
+<br/>
+<br/>
+
+#### Two ways to explore the effects of taxonomy
+
+  - We can take our best estimate for the response of each species to elevation and plot them by taxonomy
+
+  - We can build models that include additional group effects for each taxonomic level of interest
+
+
+---
+
+# Atacama desert microbiome - taxonomy
+<br/>
+<br/>
+
+#### Two ways to explore the effects of taxonomy
+
+  - **We can take our best estimate for the response of each species to elevation and plot them by taxonomy**
+
+  - We can build models that include additional group effects for each taxonomic level of interest
+  
+---
+
+# Atacama desert microbiome - are there taxonomic effects?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=5, fig.align='center'}
+taxonomy_plot
+```
+
+---
+
+# Extending these models
+
+#### These Bayesian linear models can be extended a lot further
+
+* Estimate repeatability of sampling of the microbial community from individuals
+
+* Similarly, estimate heritability of microbial community
+
+* Include multiple taxonomic levels in the model
+
+* Can transform the turnover components into measures of $\beta$ diversity such as Jaccard's index
+
+* Incorporate spatial autocorrelation using Bayesian spatial modelling software such as *R-INLA*
+
+---
+
+# Further reading
+
+#### Bayesian models
+
+* Hobbs and Hooten, 2015: Bayesian Models: A Statistical Primer for Ecologists	
+  - https://press.princeton.edu/books/ebook/9781400874422/bayesian-models
+
+* Korner-Nievergelt et al., 2015: Bayesian Data Analysis in Ecology Using Linear Models with R, BUGS, and Stan
+  - https://www.sciencedirect.com/book/9780128013700/bayesian-data-analysis-in-ecology-using-linear-models-with-r-bugs-and-stan
+
+* McElreath, 2020:  Statistical Rethinking: A Bayesian Course with Examples in R and STAN
+  - https://www.routledge.com/Statistical-Rethinking-A-Bayesian-Course-with-Examples-in-R-and-STAN/McElreath/p/book/9780367139919
+  
+---
+<br/><br/><br/><br/>
+
+# Questions?

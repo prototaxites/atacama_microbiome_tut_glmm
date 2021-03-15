@@ -1,0 +1,8 @@
+QIIME/demux-full.qza filter=lfs diff=lfs merge=lfs -text
+QIIME/emp-paired-end-sequences.qza filter=lfs diff=lfs merge=lfs -text
+QIIME/silva-138-99-515-806-nb-classifier.qza filter=lfs diff=lfs merge=lfs -text
+Data/glmm_dataset.csv filter=lfs diff=lfs merge=lfs -text
+Models/Model3_noPhylo.Rdata filter=lfs diff=lfs merge=lfs -text
+Models/sims.Rdata filter=lfs diff=lfs merge=lfs -text
+Sequences/forward.fastq.gz filter=lfs diff=lfs merge=lfs -text
+Sequences/reverse.fastq.gz filter=lfs diff=lfs merge=lfs -text
